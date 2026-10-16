@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "deep-eyes-dashboard",
+      "runtimeExecutable": "/Users/jackson.smith/.nvm/versions/node/v20.15.1/bin/node",
+      "runtimeArgs": ["node_modules/.bin/vite"],
+      "port": 5173,
+      "autoPort": false
+    }
+  ]
+}

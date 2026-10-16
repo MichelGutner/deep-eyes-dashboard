@@ -1,599 +1,305 @@
-import {
-  Activity,
-  AlertTriangle,
-  CheckCircle,
-  Clock,
-  Download,
-  Lock,
-  Settings,
-  Shield,
-  ShieldAlert,
-  Unlock,
-  User,
-  X,
-  XCircle
-} from 'lucide-react';
-import React, { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { AlertTriangle, CheckCircle, Clock, Lock, Shield, ShieldAlert, Unlock, User, X, XCircle, Settings } from 'lucide-react';
+import React, { useState } from 'react';
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useSecurity } from '../hooks/useSecurity';
 
 interface SecurityEvent {
-  id: string;
-  timestamp: string;
+  id: string; timestamp: string;
   type: 'login' | 'logout' | 'access_denied' | 'suspicious_activity' | 'threat_detected' | 'config_change';
   severity: 'low' | 'medium' | 'high' | 'critical';
-  user: string;
-  ip: string;
-  location: string;
-  userAgent: string;
-  action: string;
-  resource: string;
-  details: Record<string, unknown>;
-  status: 'investigating' | 'resolved' | 'false_positive';
+  user: string; ip: string; location: string; action: string; resource: string;
+  details: Record<string, unknown>; status: 'investigating' | 'resolved' | 'false_positive';
 }
 
 interface ThreatIntel {
-  id: string;
-  type: 'ip' | 'domain' | 'hash' | 'url';
-  value: string;
-  threatLevel: 'low' | 'medium' | 'high' | 'critical';
-  category: string[];
-  firstSeen: string;
-  lastSeen: string;
-  description: string;
-  source: string;
+  id: string; type: 'ip' | 'domain' | 'hash' | 'url';
+  value: string; threatLevel: 'low' | 'medium' | 'high' | 'critical';
+  category: string[]; lastSeen: string; description: string; source: string;
 }
 
 interface AccessControl {
-  id: string;
-  user: string;
-  role: string;
-  permissions: string[];
-  lastAccess: string;
-  status: 'active' | 'suspended' | 'expired';
-  ipWhitelist: string[];
-  mfaEnabled: boolean;
-  lastLogin: string;
+  id: string; user: string; role: string; permissions: string[];
+  lastLogin: string; status: 'active' | 'suspended' | 'expired'; mfaEnabled: boolean;
 }
 
-interface SecurityMetrics {
-  totalEvents: number;
-  threatsBlocked: number;
-  suspiciousActivities: number;
-  failedLogins: number;
-  successfulLogins: number;
-  avgResponseTime: number;
-  threatLevel: 'low' | 'medium' | 'high' | 'critical';
+interface Metrics {
+  totalEvents: number; threatsBlocked: number; suspiciousActivities: number;
+  failedLogins: number; successfulLogins: number; threatLevel: string;
 }
+
+const SEV: Record<string, string> = {
+  low:      'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
+  medium:   'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300',
+  high:     'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300',
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+};
+
+function EventIcon({ type }: { type: string }) {
+  const cls = 'w-3.5 h-3.5';
+  if (type === 'login') return <Unlock className={`${cls} text-green-500`} />;
+  if (type === 'logout') return <Lock className={`${cls} text-gray-400`} />;
+  if (type === 'access_denied') return <ShieldAlert className={`${cls} text-red-500`} />;
+  if (type === 'suspicious_activity') return <AlertTriangle className={`${cls} text-orange-500`} />;
+  if (type === 'threat_detected') return <Shield className={`${cls} text-red-500`} />;
+  return <Settings className={`${cls} text-blue-500`} />;
+}
+
+function StatusIcon({ status }: { status: string }) {
+  if (status === 'investigating') return <Clock className="w-3.5 h-3.5 text-yellow-500" />;
+  if (status === 'resolved') return <CheckCircle className="w-3.5 h-3.5 text-green-500" />;
+  return <XCircle className="w-3.5 h-3.5 text-gray-400" />;
+}
+
+function genThreats(): ThreatIntel[] {
+  const types: ThreatIntel['type'][] = ['ip', 'domain', 'hash', 'url'];
+  const levels: ThreatIntel['threatLevel'][] = ['low', 'medium', 'high', 'critical'];
+  return Array.from({ length: 12 }, (_, i) => ({
+    id: `th${i}`, type: types[i % 4],
+    value: `threat-${(i * 7 + 13).toString(36)}`, threatLevel: levels[i % 4],
+    category: ['malware', 'phishing', 'botnet'].slice(0, (i % 2) + 1),
+    lastSeen: new Date(Date.now() - Math.random() * 86_400_000).toISOString(),
+    description: 'Suspicious activity detected', source: 'CrowdStrike',
+  }));
+}
+
+function genAccess(): AccessControl[] {
+  const roles = ['admin', 'user', 'viewer', 'operator'];
+  return Array.from({ length: 10 }, (_, i) => ({
+    id: `ac${i}`, user: `user-${i}`, role: roles[i % 4],
+    permissions: ['read', 'write', 'delete'].slice(0, (i % 3) + 1),
+    lastLogin: new Date(Date.now() - Math.random() * 86_400_000).toISOString(),
+    status: (['active', 'suspended', 'expired'] as const)[i % 3],
+    mfaEnabled: i % 3 !== 0,
+  }));
+}
+
+const TIMELINE = Array.from({ length: 24 }, (_, i) => ({
+  hour: `${i}h`, events: Math.floor(Math.random() * 10), threats: Math.floor(Math.random() * 3),
+}));
 
 export const SecuritySystem: React.FC = () => {
-  const { t } = useTranslation();
-  const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
-  const [threatIntel, setThreatIntel] = useState<ThreatIntel[]>([]);
-  const [accessControls, setAccessControls] = useState<AccessControl[]>([]);
-  const [metrics, setMetrics] = useState<SecurityMetrics>({
-    totalEvents: 0,
-    threatsBlocked: 0,
-    suspiciousActivities: 0,
-    failedLogins: 0,
-    successfulLogins: 0,
-    avgResponseTime: 0,
-    threatLevel: 'low'
-  });
-  const [selectedEvent, setSelectedEvent] = useState<SecurityEvent | null>(null);
-  const [filter, setFilter] = useState({
-    severity: [] as string[],
-    type: [] as string[],
-    status: [] as string[],
-    timeRange: '24h'
-  });
+  const [selected, setSelected] = useState<SecurityEvent | null>(null);
+  const [timeRange, setTimeRange] = useState('24h');
+  const [view, setView] = useState<'events' | 'threats' | 'access'>('events');
 
-  // Generate mock security data
-  useEffect(() => {
-    const generateSecurityData = () => {
-      // Generate security events
-      const events: SecurityEvent[] = Array.from({ length: 50 }, (_, i) => {
-        const types: SecurityEvent['type'][] = ['login', 'logout', 'access_denied', 'suspicious_activity', 'threat_detected', 'config_change'];
-        const severities: SecurityEvent['severity'][] = ['low', 'medium', 'high', 'critical'];
-        const statuses: SecurityEvent['status'][] = ['investigating', 'resolved', 'false_positive'];
-        
-        const event: SecurityEvent = {
-          id: `event-${i}`,
-          timestamp: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString(),
-          type: types[Math.floor(Math.random() * types.length)],
-          severity: severities[Math.floor(Math.random() * severities.length)],
-          user: `user-${Math.floor(Math.random() * 100)}`,
-          ip: `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
-          location: ['New York', 'London', 'Tokyo', 'Sydney', 'Berlin'][Math.floor(Math.random() * 5)],
-          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          action: 'API request',
-          resource: '/api/users',
-          details: {
-            method: 'GET',
-            statusCode: Math.random() > 0.1 ? 200 : 403,
-            responseTime: Math.floor(Math.random() * 1000) + 50
-          },
-          status: statuses[Math.floor(Math.random() * statuses.length)]
-        };
-        
-        return event;
-      });
+  const { data: secData } = useSecurity(timeRange);
 
-      // Generate threat intelligence
-      const threats: ThreatIntel[] = Array.from({ length: 20 }, (_, i) => ({
-        id: `threat-${i}`,
-        type: ['ip', 'domain', 'hash', 'url'][Math.floor(Math.random() * 4)] as ThreatIntel['type'],
-        value: `threat-${Math.random().toString(36).substr(2, 9)}`,
-        threatLevel: ['low', 'medium', 'high', 'critical'][Math.floor(Math.random() * 4)] as ThreatIntel['threatLevel'],
-        category: ['malware', 'phishing', 'botnet', 'spam'].slice(0, Math.floor(Math.random() * 2) + 1),
-        firstSeen: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
-        lastSeen: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString(),
-        description: 'Suspicious activity detected',
-        source: 'CrowdStrike'
-      }));
-
-      // Generate access controls
-      const access: AccessControl[] = Array.from({ length: 10 }, (_, i) => ({
-        id: `access-${i}`,
-        user: `user-${i}`,
-        role: ['admin', 'user', 'viewer', 'operator'][Math.floor(Math.random() * 4)],
-        permissions: ['read', 'write', 'delete'].slice(0, Math.floor(Math.random() * 3) + 1),
-        lastAccess: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString(),
-        status: ['active', 'suspended', 'expired'][Math.floor(Math.random() * 3)] as AccessControl['status'],
-        ipWhitelist: [`${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.0.0/16`],
-        mfaEnabled: Math.random() > 0.3,
-        lastLogin: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString()
-      }));
-
-      setSecurityEvents(events);
-      setThreatIntel(threats);
-      setAccessControls(access);
-
-      // Calculate metrics
-      const totalEvents = events.length;
-      const threatsBlocked = events.filter(e => e.type === 'threat_detected').length;
-      const suspiciousActivities = events.filter(e => e.type === 'suspicious_activity').length;
-      const failedLogins = events.filter(e => e.type === 'access_denied').length;
-      const successfulLogins = events.filter(e => e.type === 'login').length;
-      const avgResponseTime = events.reduce((sum, e) => sum + ((e.details.responseTime as number) || 0), 0) / events.length;
-      
-      const threatLevel = threatsBlocked > 10 ? 'critical' : 
-                         threatsBlocked > 5 ? 'high' : 
-                         threatsBlocked > 2 ? 'medium' : 'low';
-
-      setMetrics({
-        totalEvents,
-        threatsBlocked,
-        suspiciousActivities,
-        failedLogins,
-        successfulLogins,
-        avgResponseTime,
-        threatLevel
-      });
-    };
-
-    generateSecurityData();
-  }, []);
-
-  const getSeverityColor = (severity: string) => {
-    const colors = {
-      low: 'bg-blue-100 text-blue-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      high: 'bg-orange-100 text-orange-800',
-      critical: 'bg-red-100 text-red-800'
-    };
-    return colors[severity as keyof typeof colors] || colors.low;
-  };
-
-  const getThreatLevelColor = (level: string) => {
-    const colors = {
-      low: 'bg-green-100 text-green-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      high: 'bg-orange-100 text-orange-800',
-      critical: 'bg-red-100 text-red-800'
-    };
-    return colors[level as keyof typeof colors] || colors.low;
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'investigating': return <Clock className="w-4 h-4 text-yellow-600" />;
-      case 'resolved': return <CheckCircle className="w-4 h-4 text-green-600" />;
-      case 'false_positive': return <XCircle className="w-4 h-4 text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500" />;
-      default: return <Activity className="w-4 h-4 text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500" />;
-    }
-  };
-
-  const getEventIcon = (type: string) => {
-    switch (type) {
-      case 'login': return <Unlock className="w-4 h-4 text-green-600" />;
-      case 'logout': return <Lock className="w-4 h-4 text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500" />;
-      case 'access_denied': return <ShieldAlert className="w-4 h-4 text-red-600" />;
-      case 'suspicious_activity': return <AlertTriangle className="w-4 h-4 text-orange-600" />;
-      case 'threat_detected': return <Shield className="w-4 h-4 text-red-600" />;
-      case 'config_change': return <Settings className="w-4 h-4 text-blue-600" />;
-      default: return <Activity className="w-4 h-4 text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500" />;
-    }
-  };
-
-  const filteredEvents = securityEvents.filter(event => {
-    if (filter.severity.length > 0 && !filter.severity.includes(event.severity)) return false;
-    if (filter.type.length > 0 && !filter.type.includes(event.type)) return false;
-    if (filter.status.length > 0 && !filter.status.includes(event.status)) return false;
-    return true;
-  });
-
-  const threatData = [
-    { name: t('threat_distribution_blocked'), value: metrics.threatsBlocked, color: '#EF4444' },
-    { name: t('threat_distribution_suspicious'), value: metrics.suspiciousActivities, color: '#F59E0B' },
-    { name: t('threat_distribution_failed_logins'), value: metrics.failedLogins, color: '#8B5CF6' },
-    { name: t('threat_distribution_successful_logins'), value: metrics.successfulLogins, color: '#10B981' }
-  ];
-
-  const timelineData = Array.from({ length: 24 }, (_, i) => ({
-    hour: i,
-    events: Math.floor(Math.random() * 10),
-    threats: Math.floor(Math.random() * 3)
+  // Mapeia eventos do backend para SecurityEvent
+  const events: SecurityEvent[] = (secData?.events ?? []).map(e => ({
+    id: e.id,
+    timestamp: e.timestamp,
+    type: e.type as SecurityEvent['type'],
+    severity: e.severity,
+    user: e.user,
+    ip: e.ip,
+    location: '—',
+    action: e.action,
+    resource: e.resource,
+    details: {},
+    status: e.status,
   }));
 
-  const exportSecurityReport = () => {
-    alert('Export functionality not implemented yet.');
+  // Threats e Access ainda são mock (features futuras)
+  const [threats] = useState<ThreatIntel[]>(genThreats);
+  const [access] = useState<AccessControl[]>(genAccess);
+
+  const blocked = events.filter(e => e.type === 'threat_detected').length;
+  const metrics: Metrics = {
+    totalEvents: events.length,
+    threatsBlocked: blocked,
+    suspiciousActivities: events.filter(e => e.type === 'suspicious_activity').length,
+    failedLogins: events.filter(e => e.type === 'access_denied').length,
+    successfulLogins: events.filter(e => e.type === 'login').length,
+    threatLevel: blocked > 10 ? 'critical' : blocked > 5 ? 'high' : blocked > 2 ? 'medium' : 'low',
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{t('security_system')}</h2>
-          <p className="text-gray-600 dark:text-gray-400">{t('security_system_subtitle')}</p>
-        </div>
-        <div className="flex items-center space-x-4">
-          <div className={`flex items-center space-x-2 px-3 py-2 rounded-md ${getThreatLevelColor(metrics.threatLevel)}`}>
-            <Shield className="w-4 h-4" />
-            <span className="text-sm font-medium capitalize">{t('threat_level')}</span>
-          </div>
-          <button
-            onClick={exportSecurityReport}
-            className="btn-secondary flex items-center space-x-2"
-          >
-            <Activity className="w-4 h-4" />
-            <span>{t('export_report')}</span>
-          </button>
-        </div>
-      </div>
+  const threatDistData = [
+    { name: 'Blocked', value: metrics.threatsBlocked, color: '#ef4444' },
+    { name: 'Suspicious', value: metrics.suspiciousActivities, color: '#f59e0b' },
+    { name: 'Failed logins', value: metrics.failedLogins, color: '#8b5cf6' },
+    { name: 'Logins OK', value: metrics.successfulLogins, color: '#10b981' },
+  ];
 
-      {/* Security Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('total_events')}</p>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">{metrics.totalEvents}</p>
-            </div>
-            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-              <Activity className="w-4 h-4 text-blue-600" />
-            </div>
+  return (
+    <div className="space-y-5">
+      {/* Stats strip */}
+      <div className="flex flex-wrap gap-3">
+        {[
+          { label: 'Total events', value: metrics.totalEvents, color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800' },
+          { label: 'Threats blocked', value: metrics.threatsBlocked, color: 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800' },
+          { label: 'Suspicious', value: metrics.suspiciousActivities, color: 'text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 border-orange-200 dark:border-orange-800' },
+          { label: 'Failed logins', value: metrics.failedLogins, color: 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-800' },
+          { label: `Threat: ${metrics.threatLevel}`, value: '', color: SEV[metrics.threatLevel] + ' border-current' },
+        ].map(s => (
+          <div key={s.label} className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium ${s.color}`}>
+            {s.value !== '' && <span className="font-bold text-sm">{s.value}</span>}
+            <span className={s.value !== '' ? 'opacity-75' : 'font-semibold'}>{s.label}</span>
           </div>
-        </div>
-        
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('threats_blocked')}</p>
-              <p className="text-2xl font-semibold text-red-600">{metrics.threatsBlocked}</p>
-            </div>
-            <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-              <Shield className="w-4 h-4 text-red-600" />
-            </div>
-          </div>
-        </div>
-        
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('suspicious_activities')}</p>
-              <p className="text-2xl font-semibold text-orange-600">{metrics.suspiciousActivities}</p>
-            </div>
-            <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
-              <AlertTriangle className="w-4 h-4 text-orange-600" />
-            </div>
-          </div>
-        </div>
-        
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('failed_logins')}</p>
-              <p className="text-2xl font-semibold text-purple-600">{metrics.failedLogins}</p>
-            </div>
-            <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
-              <Lock className="w-4 h-4 text-purple-600" />
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Threat Distribution */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('threat_distribution')}</h3>
-          <ResponsiveContainer width="100%" height={300}>
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Threat distribution</h3>
+          <ResponsiveContainer width="100%" height={180}>
             <PieChart>
-              <Pie
-                data={threatData}
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-                dataKey="value"
-              >
-                {threatData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
+              <Pie data={threatDistData} cx="50%" cy="50%" outerRadius={65} innerRadius={30} dataKey="value" paddingAngle={2}>
+                {threatDistData.map((e, i) => <Cell key={i} fill={e.color} />)}
               </Pie>
-              <Tooltip />
+              <Tooltip contentStyle={{ borderRadius: '0.5rem', border: '1px solid #e5e7eb', fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
         </div>
-
-        {/* Security Timeline */}
         <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('security_events_timeline')}</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={timelineData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hour" />
-              <YAxis />
-              <Tooltip />
-              <Line type="monotone" dataKey="events" stroke="#3B82F6" strokeWidth={2} name={t('events')} />
-              <Line type="monotone" dataKey="threats" stroke="#EF4444" strokeWidth={2} name={t('threats')} />
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Security timeline (24h)</h3>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={TIMELINE}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" className="dark:stroke-gray-700" />
+              <XAxis dataKey="hour" tick={{ fontSize: 10 }} stroke="#9ca3af" />
+              <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" />
+              <Tooltip contentStyle={{ borderRadius: '0.5rem', border: '1px solid #e5e7eb', fontSize: 12 }} />
+              <Line type="monotone" dataKey="events" stroke="#3b82f6" strokeWidth={2} dot={false} name="Events" />
+              <Line type="monotone" dataKey="threats" stroke="#ef4444" strokeWidth={2} dot={false} name="Threats" />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Security Events */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('security_events')}</h3>
-          <div className="flex items-center space-x-2">
-            <select
-              value={filter.timeRange}
-              onChange={(e) => setFilter({ ...filter, timeRange: e.target.value })}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-            >
-              <option value="1h">{t('last_hour')}</option>
-              <option value="24h">{t('last_24_hours')}</option>
-              <option value="7d">{t('last_7_days')}</option>
-              <option value="30d">{t('last_30_days')}</option>
-            </select>
-            <button className="btn-secondary flex items-center space-x-2">
-              <Download className="w-4 h-4" />
-              <span>{t('export')}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('event')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('user')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('ip_address')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('severity')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('status')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('time')}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white dark:bg-gray-700 divide-y divide-gray-200">
-              {filteredEvents.slice(0, 10).map((event) => (
-                <tr key={event.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 dark:bg-gray-800 cursor-pointer" onClick={() => setSelectedEvent(event)}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center space-x-3">
-                      {getEventIcon(event.type)}
-                      <div>
-                        <div className="text-sm font-medium text-gray-900 dark:text-white capitalize">{event.type.replace('_', ' ')}</div>
-                        <div className="text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">{event.action}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    {event.user}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">
-                    {event.ip}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getSeverityColor(event.severity)}`}>
-                      {event.severity.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center space-x-2">
-                      {getStatusIcon(event.status)}
-                      <span className="text-sm text-gray-900 dark:text-white capitalize">{event.status.replace('_', ' ')}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">
-                    {new Date(event.timestamp).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {/* Sub-tab switcher */}
+      <div className="flex gap-1 bg-gray-100 dark:bg-gray-700/50 p-1 rounded-lg w-fit">
+        {[{ id: 'events', label: 'Events' }, { id: 'threats', label: 'Threat Intel' }, { id: 'access', label: 'Access Control' }].map(tab => (
+          <button key={tab.id} onClick={() => setView(tab.id as typeof view)}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === tab.id ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>
+            {tab.label}
+          </button>
+        ))}
+        {view === 'events' && (
+          <select value={timeRange} onChange={e => setTimeRange(e.target.value)} className="ml-2 form-select text-xs py-1 px-2 h-7">
+            <option value="1h">1h</option><option value="24h">24h</option><option value="7d">7d</option>
+          </select>
+        )}
       </div>
 
-      {/* Threat Intelligence */}
-      <div className="card">
-        <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('threat_intelligence')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {threatIntel.slice(0, 6).map((threat) => (
-            <div key={threat.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getThreatLevelColor(threat.threatLevel)}`}>
-                  {threat.threatLevel.toUpperCase()}
-                </span>
-                <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">{threat.type}</span>
+      {/* Events table */}
+      {view === 'events' && (
+        <div className="card">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 dark:border-gray-700">
+                  {['Event', 'User', 'IP', 'Location', 'Severity', 'Status', 'Time'].map(h => (
+                    <th key={h} className="pb-2 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide pr-4">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+                {events.slice(0, 15).map(ev => (
+                  <tr key={ev.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 cursor-pointer" onClick={() => setSelected(ev)}>
+                    <td className="py-2 pr-4">
+                      <div className="flex items-center gap-1.5">
+                        <EventIcon type={ev.type} />
+                        <span className="text-gray-700 dark:text-gray-300 capitalize text-xs whitespace-nowrap">{ev.type.replace('_', ' ')}</span>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-4 text-gray-600 dark:text-gray-400 text-xs">{ev.user}</td>
+                    <td className="py-2 pr-4 text-gray-500 dark:text-gray-500 text-xs font-mono">{ev.ip}</td>
+                    <td className="py-2 pr-4 text-gray-500 dark:text-gray-400 text-xs">{ev.location}</td>
+                    <td className="py-2 pr-4"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${SEV[ev.severity]}`}>{ev.severity}</span></td>
+                    <td className="py-2 pr-4"><div className="flex items-center gap-1"><StatusIcon status={ev.status} /><span className="text-xs text-gray-500 dark:text-gray-400 capitalize">{ev.status.replace('_', ' ')}</span></div></td>
+                    <td className="py-2 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">{new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Threat intel */}
+      {view === 'threats' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {threats.map(th => (
+            <div key={th.id} className="card">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${SEV[th.threatLevel]}`}>{th.threatLevel}</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 capitalize">{th.type}</span>
               </div>
-              <div className="text-sm font-medium text-gray-900 dark:text-white mb-1">{threat.value}</div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">{threat.description}</div>
-              <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                <span>{t('source')}: {threat.source}</span>
-                <span>{new Date(threat.lastSeen).toLocaleDateString()}</span>
+              <p className="text-sm font-medium text-gray-900 dark:text-white mb-0.5 font-mono text-xs">{th.value}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">{th.description}</p>
+              <div className="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
+                <span>{th.source}</span>
+                <span>{new Date(th.lastSeen).toLocaleDateString()}</span>
+              </div>
+              <div className="flex gap-1 mt-1.5">
+                {th.category.map(c => <span key={c} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-[10px] rounded">{c}</span>)}
               </div>
             </div>
           ))}
         </div>
-      </div>
+      )}
 
-      {/* Access Control */}
-      <div className="card">
-        <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('access_control')}</h3>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('user')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('role')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('status')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('mfa')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('last_login')}
-                </th>
+      {/* Access control */}
+      {view === 'access' && (
+        <div className="card overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 dark:border-gray-700">
+                {['User', 'Role', 'Status', 'MFA', 'Permissions', 'Last Login'].map(h => (
+                  <th key={h} className="pb-2 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide pr-4">{h}</th>
+                ))}
               </tr>
             </thead>
-            <tbody className="bg-white dark:bg-gray-700 divide-y divide-gray-200">
-              {accessControls.map((access) => (
-                <tr key={access.id}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center">
-                        <User className="w-4 h-4 text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500" />
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+              {access.map(ac => (
+                <tr key={ac.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                  <td className="py-2.5 pr-4">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-6 h-6 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center flex-shrink-0">
+                        <User className="w-3 h-3 text-gray-400" />
                       </div>
-                      <div className="ml-3">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">{access.user}</div>
-                      </div>
+                      <span className="font-medium text-gray-900 dark:text-white">{ac.user}</span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white capitalize">
-                    {access.role}
+                  <td className="py-2.5 pr-4 capitalize text-gray-600 dark:text-gray-400">{ac.role}</td>
+                  <td className="py-2.5 pr-4">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${ac.status === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' : ac.status === 'suspended' ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'}`}>{ac.status}</span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      access.status === 'active' ? 'bg-green-100 text-green-800' :
-                      access.status === 'suspended' ? 'bg-red-100 text-red-800' :
-                      'bg-gray-100 dark:bg-gray-700 text-gray-800'
-                    }`}>
-                      {access.status}
-                    </span>
+                  <td className="py-2.5 pr-4">{ac.mfaEnabled ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-red-400" />}</td>
+                  <td className="py-2.5 pr-4">
+                    <div className="flex flex-wrap gap-1">{ac.permissions.map(p => <span key={p} className="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[10px] rounded">{p}</span>)}</div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {access.mfaEnabled ? (
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-red-600" />
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">
-                    {new Date(access.lastLogin).toLocaleString()}
-                  </td>
+                  <td className="py-2.5 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">{new Date(ac.lastLogin).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </div>
+      )}
 
-      {/* Event Details Modal */}
-      {selectedEvent && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-700 rounded-lg p-6 w-full max-w-2xl">
+      {/* Event detail modal */}
+      {selected && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelected(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('event_details')}</h3>
-              <button
-                onClick={() => setSelectedEvent(null)}
-                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <EventIcon type={selected.type} />
+                {selected.type.replace('_', ' ')}
+              </h3>
+              <button onClick={() => setSelected(null)} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"><X className="w-4 h-4 text-gray-400" /></button>
             </div>
-            
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('event_type')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white capitalize">{selectedEvent.type.replace('_', ' ')}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('severity')}</label>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getSeverityColor(selectedEvent.severity)}`}>
-                    {selectedEvent.severity.toUpperCase()}
-                  </span>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('user')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedEvent.user}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('ip_address')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedEvent.ip}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('location')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedEvent.location}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('status')}</label>
-                  <div className="flex items-center space-x-2">
-                    {getStatusIcon(selectedEvent.status)}
-                    <span className="text-sm text-gray-900 dark:text-white capitalize">{selectedEvent.status.replace('_', ' ')}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('action')}</label>
-                <p className="text-sm text-gray-900 dark:text-white">{selectedEvent.action}</p>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('resource')}</label>
-                <p className="text-sm text-gray-900 dark:text-white">{selectedEvent.resource}</p>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('details')}</label>
-                <pre className="bg-gray-100 dark:bg-gray-700 p-3 rounded text-xs font-mono overflow-x-auto">
-                  {JSON.stringify(selectedEvent.details, null, 2)}
-                </pre>
-              </div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              {[['User', selected.user], ['IP', selected.ip], ['Location', selected.location], ['Action', selected.action], ['Resource', selected.resource], ['Status', selected.status]].map(([k, v]) => (
+                <div key={k}><span className="text-xs text-gray-400 dark:text-gray-500">{k}</span><p className="font-medium text-gray-900 dark:text-white capitalize">{String(v).replace('_', ' ')}</p></div>
+              ))}
+            </div>
+            <div className="mt-3">
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Details</p>
+              <pre className="bg-gray-50 dark:bg-gray-700 rounded-lg p-2 text-xs font-mono overflow-x-auto text-gray-700 dark:text-gray-300">{JSON.stringify(selected.details, null, 2)}</pre>
             </div>
           </div>
         </div>
       )}
     </div>
   );
-}; 
+};

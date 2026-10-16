@@ -11,6 +11,7 @@
     "mock-server": "node mock-server.js"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.101.1",
     "axios": "^1.10.0",
     "clsx": "^2.0.0",
     "date-fns": "^2.30.0",
@@ -22,6 +23,7 @@
     "react-hot-toast": "^2.4.1",
     "react-i18next": "^15.6.0",
     "react-is": "^18.2.0",
+    "react-router-dom": "^7.18.0",
     "recharts": "^3.1.0"
   },
   "devDependencies": {

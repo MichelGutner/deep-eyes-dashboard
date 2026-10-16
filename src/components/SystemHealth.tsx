@@ -1,158 +1,124 @@
-import React, { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Activity } from 'lucide-react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { CheckCircle, XCircle, Clock, Download } from 'lucide-react';
+import api from '../services/api';
 
-interface HealthData {
-  uptime: string;
-  memoryUsage: string;
-  cpuUsage: string;
-  diskUsage: string;
-  databaseConnected: boolean;
-  databaseLatency: number;
-  apiUp: boolean;
-  apiLatency: number;
-  dependencies: Record<string, { message: string }>;
+interface HealthResponse {
+  status: 'healthy' | 'degraded' | 'down';
+  uptime: number;
+  services: { elasticsearch: 'up' | 'down'; database: 'up' | 'down' };
+  timestamp: string;
+}
+
+function formatUptime(seconds: number) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${d}d ${h}h ${m}m`;
+}
+
+function StatusDot({ up }: { up: boolean }) {
+  return up
+    ? <CheckCircle className="w-4 h-4 text-green-500" />
+    : <XCircle className="w-4 h-4 text-red-500" />;
 }
 
 export const SystemHealth: React.FC = () => {
-  const { t } = useTranslation();
-  const [healthData, setHealthData] = useState<HealthData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, isLoading, error, dataUpdatedAt } = useQuery<HealthResponse>({
+    queryKey: ['health'],
+    queryFn: () => api.get('/health').then(r => r.data),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
 
-  useEffect(() => {
-    const fetchHealthData = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch('/api/health');
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        setHealthData(data);
-             } catch (err) {
-         setError(err instanceof Error ? err.message : 'Unknown error');
-       } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchHealthData();
-    const interval = setInterval(fetchHealthData, 5000); // Poll every 5 seconds
-    return () => clearInterval(interval);
-  }, []);
-
-  const exportHealthReport = () => {
-    if (healthData) {
-      const dataStr = JSON.stringify(healthData, null, 2);
-      const blob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'system_health_report.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
+  const exportReport = () => {
+    if (!data) return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob),
+      download: 'health_report.json',
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
 
-  if (loading && !healthData) {
-    return <div className="text-center py-8">{t('loading_health_data')}</div>;
+  const overallColor =
+    data?.status === 'healthy' ? 'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800' :
+    data?.status === 'degraded' ? 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800' :
+    'text-red-600 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800';
+
+  if (isLoading && !data) {
+    return <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Checking health…</div>;
   }
 
-  if (error) {
-    return <div className="text-center py-8 text-red-500">{t('error_loading_health_data')}: {error}</div>;
-  }
-
-  if (!healthData) {
-    return <div className="text-center py-8">{t('no_health_data_available')}</div>;
+  if (error && !data) {
+    return (
+      <div className="card text-center py-10">
+        <XCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
+        <p className="text-sm text-red-500">Backend unreachable</p>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{t('system_health')}</h2>
-          <p className="text-gray-600 dark:text-gray-400">{t('system_health_subtitle')}</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className={`px-3 py-1 rounded-full border text-xs font-semibold uppercase tracking-wide ${overallColor}`}>
+            {data?.status ?? '—'}
+          </span>
+          {dataUpdatedAt > 0 && (
+            <span className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              Updated {new Date(dataUpdatedAt).toLocaleTimeString()}
+            </span>
+          )}
         </div>
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={exportHealthReport}
-            className="btn-secondary flex items-center space-x-2"
-          >
-            <Activity className="w-4 h-4" />
-            <span>{t('export_report')}</span>
-          </button>
-        </div>
+        <button onClick={exportReport} className="btn-secondary text-xs flex items-center gap-1.5">
+          <Download className="w-3.5 h-3.5" />
+          Export
+        </button>
       </div>
 
-      {/* System Status */}
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('system_status')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('uptime')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.uptime}</p>
-          </div>
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('memory_usage')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.memoryUsage}</p>
-          </div>
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('cpu_usage')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.cpuUsage}</p>
-          </div>
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('disk_usage')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.diskUsage}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Database Status */}
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('database_status')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('database_connected')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.databaseConnected ? t('yes') : t('no')}</p>
-          </div>
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('database_latency')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.databaseLatency}ms</p>
-          </div>
-        </div>
-      </div>
-
-      {/* API Status */}
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('api_status')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('api_up')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.apiUp ? t('yes') : t('no')}</p>
-          </div>
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-            <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('api_latency')}</h4>
-            <p className="text-gray-600 dark:text-gray-400">{healthData.apiLatency}ms</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Dependencies Status */}
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('dependencies_status')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {healthData.dependencies && Object.entries(healthData.dependencies).map(([name, status]) => (
-            <div key={name} className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-              <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{name}</h4>
-              <p className="text-gray-600 dark:text-gray-400">{status.message}</p>
+      {/* Service cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {[
+          { label: 'Elasticsearch', key: 'elasticsearch' as const },
+          { label: 'Database',      key: 'database' as const },
+        ].map(({ label, key }) => {
+          const up = data?.services[key] === 'up';
+          return (
+            <div key={key} className="card flex items-center gap-3">
+              <StatusDot up={up} />
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">{label}</p>
+                <p className={`text-xs ${up ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+                  {up ? 'Operational' : 'Down'}
+                </p>
+              </div>
             </div>
-          ))}
+          );
+        })}
+
+        <div className="card flex items-center gap-3">
+          <CheckCircle className="w-4 h-4 text-blue-500" />
+          <div>
+            <p className="text-sm font-medium text-gray-900 dark:text-white">Backend API</p>
+            <p className="text-xs text-blue-600 dark:text-blue-400">Operational</p>
+          </div>
+        </div>
+
+        <div className="card flex items-center gap-3">
+          <Clock className="w-4 h-4 text-gray-400" />
+          <div>
+            <p className="text-sm font-medium text-gray-900 dark:text-white">Uptime</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {data ? formatUptime(data.uptime) : '—'}
+            </p>
+          </div>
         </div>
       </div>
     </div>
   );
-}; 
+};

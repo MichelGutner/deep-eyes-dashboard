@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { 
-  Wifi, 
-  WifiOff, 
-  Users, 
+import {
+  Wifi,
+  WifiOff,
+  Users,
   Activity,
   Send,
   Play,
   Pause
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useRealtimeStream } from '../hooks/useRealtime';
 
 interface RealTimeMetric {
   id: string;
@@ -39,82 +40,37 @@ interface CollaborationMessage {
 
 export const RealTimeSystem: React.FC = () => {
   const { t } = useTranslation();
-  const [isConnected, setIsConnected] = useState(false);
-  const [realTimeMetrics, setRealTimeMetrics] = useState<RealTimeMetric[]>([]);
+  const { data: streamData, connected: isConnected } = useRealtimeStream();
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
   const [collaborationMessages, setCollaborationMessages] = useState<CollaborationMessage[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(5000);
   const [newMessage, setNewMessage] = useState('');
 
-  // Mock WebSocket simulation
+  // Mapeia eventos do backend para LiveEvent
   useEffect(() => {
-    const simulateWebSocket = () => {
-      setIsConnected(true);
-      
-      // Simulate real-time metrics
-      const interval = setInterval(() => {
-        if (autoRefresh) {
-          const newMetrics: RealTimeMetric[] = [
-            {
-              id: '1',
-              name: 'CPU Usage',
-              value: Math.floor(Math.random() * 30) + 40,
-              unit: '%',
-              timestamp: new Date().toISOString(),
-              trend: Math.random() > 0.5 ? 'up' : 'down'
-            },
-            {
-              id: '2',
-              name: 'Memory Usage',
-              value: Math.floor(Math.random() * 20) + 60,
-              unit: '%',
-              timestamp: new Date().toISOString(),
-              trend: Math.random() > 0.5 ? 'up' : 'down'
-            },
-            {
-              id: '3',
-              name: 'Response Time',
-              value: Math.floor(Math.random() * 100) + 100,
-              unit: 'ms',
-              timestamp: new Date().toISOString(),
-              trend: Math.random() > 0.5 ? 'up' : 'down'
-            },
-            {
-              id: '4',
-              name: 'Error Rate',
-              value: Math.random() * 2,
-              unit: '%',
-              timestamp: new Date().toISOString(),
-              trend: Math.random() > 0.5 ? 'up' : 'down'
-            }
-          ];
-          
-          setRealTimeMetrics(newMetrics);
-          
-          // Simulate live events
-          if (Math.random() > 0.7) {
-            const newEvent: LiveEvent = {
-              id: Date.now().toString(),
-              type: Math.random() > 0.5 ? 'log' : 'error',
-              message: `Real-time event: ${Math.random() > 0.5 ? 'User login' : 'Database query'}`,
-              timestamp: new Date().toISOString(),
-              severity: ['low', 'medium', 'high', 'critical'][Math.floor(Math.random() * 4)] as 'low' | 'medium' | 'high' | 'critical',
-              source: 'user-service'
-            };
-            
-            setLiveEvents(prev => [newEvent, ...prev.slice(0, 49)]);
-            toast.success('New live event received!');
-          }
-        }
-      }, refreshInterval);
+    if (!streamData?.events?.length) return;
+    const incoming: LiveEvent[] = streamData.events.map(e => ({
+      id: e.id,
+      type: (e.level === 'error' || e.level === 'fatal') ? 'error' : 'log',
+      message: e.message,
+      timestamp: e.timestamp,
+      severity: e.level === 'fatal' ? 'critical' : e.level === 'error' ? 'high' : e.level === 'warn' ? 'medium' : 'low',
+      source: e.app ?? e.platform ?? 'unknown',
+    }));
+    setLiveEvents(prev => {
+      const existingIds = new Set(prev.map(e => e.id));
+      const fresh = incoming.filter(e => !existingIds.has(e.id));
+      return [...fresh, ...prev].slice(0, 50);
+    });
+  }, [streamData]);
 
-      return () => clearInterval(interval);
-    };
-
-    const cleanup = simulateWebSocket();
-    return cleanup;
-  }, [autoRefresh, refreshInterval]);
+  const realTimeMetrics: RealTimeMetric[] = streamData ? [
+    { id: '1', name: 'Requests/min', value: streamData.requestsPerMin, unit: 'req/min', timestamp: new Date().toISOString(), trend: 'stable' },
+    { id: '2', name: 'Errors/min',   value: streamData.errorsLastMinute, unit: 'errors', timestamp: new Date().toISOString(), trend: streamData.errorsLastMinute > 0 ? 'up' : 'stable' },
+    { id: '3', name: 'Avg Response', value: streamData.avgResponseTime, unit: 'ms', timestamp: new Date().toISOString(), trend: 'stable' },
+    { id: '4', name: 'Active Users', value: streamData.activeUsers, unit: 'users', timestamp: new Date().toISOString(), trend: 'stable' },
+  ] : [];
 
   const sendCollaborationMessage = () => {
     if (newMessage.trim()) {
@@ -149,6 +105,7 @@ export const RealTimeSystem: React.FC = () => {
   };
 
   const filteredMetrics = realTimeMetrics;
+  void refreshInterval; // controlled by SSE server (5s)
 
   return (
     <div className="space-y-6">

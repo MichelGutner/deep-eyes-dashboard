@@ -11,9 +11,11 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useTranslation } from 'react-i18next';
 import toast from "react-hot-toast";
+import { useCustomMetrics, useCreateMetric, useUpdateMetric, useToggleMetric, useDeleteMetric } from "../hooks/useCustomMetrics";
+import type { CustomMetric as BackendMetric } from "../services/customMetricsService";
 import {
   Bar,
   BarChart,
@@ -50,139 +52,40 @@ interface CustomMetric {
   updatedAt: string;
 }
 
-interface MetricTemplate {
-  id: string;
-  name: string;
-  description: string;
-  type: CustomMetric["type"];
-  query: string;
-  unit: string;
-  tags: string[];
+function backendToLocal(m: BackendMetric): CustomMetric {
+  return {
+    id: m.id,
+    name: m.name,
+    description: m.description ?? '',
+    type: (m.type as CustomMetric['type']) ?? 'counter',
+    unit: m.unit ?? '',
+    tags: [],
+    query: m.query,
+    alertThreshold: m.alertThreshold,
+    alertCondition: (m.alertCondition as CustomMetric['alertCondition']) ?? 'above',
+    chartType: (m.chartType as CustomMetric['chartType']) ?? 'line',
+    data: [],
+    isActive: m.isActive,
+    createdAt: m.created_at,
+    updatedAt: m.updated_at,
+  };
 }
 
 export const CustomMetrics: React.FC = () => {
   const { t } = useTranslation();
-  const [metrics, setMetrics] = useState<CustomMetric[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingMetric, setEditingMetric] = useState<Partial<CustomMetric>>({});
   const [timeRange, setTimeRange] = useState("1h");
   const [refreshInterval, setRefreshInterval] = useState(30000);
 
-  const metricTemplates: MetricTemplate[] = [
-    {
-      id: "cpu-usage",
-      name: "CPU Usage",
-      description: "Average CPU usage across all instances",
-      type: "gauge",
-      query: "avg(cpu_usage) by (instance)",
-      unit: "%",
-      tags: ["instance", "environment"],
-    },
-    {
-      id: "memory-usage",
-      name: "Memory Usage",
-      description: "Memory utilization percentage",
-      type: "gauge",
-      query: "avg(memory_usage) by (instance)",
-      unit: "%",
-      tags: ["instance", "environment"],
-    },
-    {
-      id: "request-rate",
-      name: "Request Rate",
-      description: "HTTP requests per second",
-      type: "counter",
-      query: "rate(http_requests_total[5m])",
-      unit: "req/s",
-      tags: ["method", "endpoint", "status"],
-    },
-    {
-      id: "response-time",
-      name: "Response Time",
-      description: "Average response time for HTTP requests",
-      type: "histogram",
-      query:
-        "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
-      unit: "ms",
-      tags: ["method", "endpoint"],
-    },
-    {
-      id: "error-rate",
-      name: "Error Rate",
-      description: "Percentage of requests that result in errors",
-      type: "gauge",
-      query:
-        'rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100',
-      unit: "%",
-      tags: ["endpoint", "error_type"],
-    },
-  ];
+  const { data: metricsData } = useCustomMetrics();
+  const createMetricMutation = useCreateMetric();
+  const updateMetricMutation = useUpdateMetric();
+  const toggleMetricMutation = useToggleMetric();
+  const deleteMetricMutation = useDeleteMetric();
 
-  // Generate mock metrics data
-  useEffect(() => {
-    const generateMockMetrics = () => {
-      const mockMetrics: CustomMetric[] = metricTemplates.map(
-        (template, index) => {
-          const data = Array.from({ length: 24 }, (_, i) => ({
-            timestamp: new Date(
-              Date.now() - (23 - i) * 60 * 60 * 1000
-            ).toISOString(),
-            value: Math.random() * 100 + index * 20,
-            tags: {
-              instance: `instance-${Math.floor(Math.random() * 3) + 1}`,
-              environment: "production",
-            },
-          }));
-
-          return {
-            id: template.id,
-            name: template.name,
-            description: template.description,
-            type: template.type,
-            unit: template.unit,
-            tags: template.tags,
-            query: template.query,
-            alertThreshold: 80,
-            alertCondition: "above" as const,
-            chartType: "line" as const,
-            data,
-            isActive: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-        }
-      );
-
-      setMetrics(mockMetrics);
-    };
-
-    generateMockMetrics();
-  }, []);
-
-  // Auto-refresh data
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setMetrics((prevMetrics) =>
-        prevMetrics.map((metric) => ({
-          ...metric,
-          data: [
-            ...metric.data.slice(1),
-            {
-              timestamp: new Date().toISOString(),
-              value: Math.random() * 100 + Math.random() * 50,
-              tags: {
-                instance: `instance-${Math.floor(Math.random() * 3) + 1}`,
-                environment: "production",
-              },
-            },
-          ],
-        }))
-      );
-    }, refreshInterval);
-
-    return () => clearInterval(interval);
-  }, [refreshInterval]);
+  const metrics: CustomMetric[] = (metricsData?.metrics ?? []).map(backendToLocal);
 
   const createMetric = () => {
     if (!editingMetric.name || !editingMetric.query) {
@@ -190,54 +93,54 @@ export const CustomMetrics: React.FC = () => {
       return;
     }
 
-    const newMetric: CustomMetric = {
-      id: `metric-${Date.now()}`,
-      name: editingMetric.name!,
-      description: editingMetric.description || "",
-      type: editingMetric.type || "counter",
-      unit: editingMetric.unit || "",
-      tags: editingMetric.tags || [],
-      query: editingMetric.query!,
-      alertThreshold: editingMetric.alertThreshold,
-      alertCondition: editingMetric.alertCondition || "above",
-      chartType: editingMetric.chartType || "line",
-      data: [],
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    setMetrics((prev) => [...prev, newMetric]);
-    setShowCreateModal(false);
-    setEditingMetric({});
-    toast.success("Metric created successfully!");
+    createMetricMutation.mutate(
+      {
+        name: editingMetric.name!,
+        description: editingMetric.description ?? '',
+        type: editingMetric.type ?? 'counter',
+        unit: editingMetric.unit ?? '',
+        query: editingMetric.query!,
+        alertThreshold: editingMetric.alertThreshold,
+        alertCondition: editingMetric.alertCondition ?? 'above',
+        chartType: editingMetric.chartType ?? 'line',
+      },
+      {
+        onSuccess: () => { setShowCreateModal(false); setEditingMetric({}); toast.success("Metric created successfully!"); },
+        onError: () => toast.error("Failed to create metric"),
+      }
+    );
   };
 
   const updateMetric = () => {
     if (!editingMetric.id) return;
 
-    setMetrics((prev) =>
-      prev.map((metric) =>
-        metric.id === editingMetric.id
-          ? { ...metric, ...editingMetric, updatedAt: new Date().toISOString() }
-          : metric
-      )
+    updateMetricMutation.mutate(
+      {
+        id: editingMetric.id,
+        name: editingMetric.name,
+        description: editingMetric.description,
+        query: editingMetric.query,
+        alertThreshold: editingMetric.alertThreshold,
+        alertCondition: editingMetric.alertCondition,
+      },
+      {
+        onSuccess: () => { setShowEditModal(false); setEditingMetric({}); toast.success("Metric updated successfully!"); },
+        onError: () => toast.error("Failed to update metric"),
+      }
     );
-    setShowEditModal(false);
-    setEditingMetric({});
-    toast.success("Metric updated successfully!");
   };
 
   const deleteMetric = (id: string) => {
-    setMetrics((prev) => prev.filter((metric) => metric.id !== id));
-    toast.success("Metric deleted successfully!");
+    deleteMetricMutation.mutate(id, {
+      onSuccess: () => toast.success("Metric deleted successfully!"),
+      onError: () => toast.error("Failed to delete metric"),
+    });
   };
 
-  const toggleMetricStatus = (id: string) => {
-    setMetrics((prev) =>
-      prev.map((metric) =>
-        metric.id === id ? { ...metric, isActive: !metric.isActive } : metric
-      )
+  const toggleMetricStatus = (id: string, currentActive: boolean) => {
+    toggleMetricMutation.mutate(
+      { id, isActive: !currentActive },
+      { onError: () => toast.error("Failed to toggle metric") }
     );
   };
 
@@ -252,7 +155,7 @@ export const CustomMetrics: React.FC = () => {
     switch (metric.chartType) {
       case "line":
         return (
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={200}>
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="time" />
@@ -270,7 +173,7 @@ export const CustomMetrics: React.FC = () => {
 
       case "bar":
         return (
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={200}>
             <BarChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="time" />
@@ -289,7 +192,7 @@ export const CustomMetrics: React.FC = () => {
         }));
 
         return (
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={200}>
             <RechartsPieChart>
               <Pie
                 data={pieData}
@@ -359,19 +262,22 @@ export const CustomMetrics: React.FC = () => {
     };
   };
 
-  console.log("CustomMetrics render - metrics:", metrics.length);
-
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white dark:text-white">{t('custom_metrics')}</h2>
-          <p className="text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500">
-            {t('custom_metrics_subtitle')}
-          </p>
+    <div className="space-y-5">
+      {/* Compact header strip */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex gap-2">
+          {[
+            { label: 'Total', value: metrics.length, color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800' },
+            { label: 'Active', value: metrics.filter(m => m.isActive).length, color: 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800' },
+          ].map(s => (
+            <div key={s.label} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium ${s.color}`}>
+              <span className="font-bold text-sm">{s.value}</span>
+              <span className="opacity-75">{s.label}</span>
+            </div>
+          ))}
         </div>
-        <div className="flex items-center space-x-4">
+        <div className="ml-auto flex items-center gap-2">
           <select
             value={timeRange}
             onChange={(e) => setTimeRange(e.target.value)}
@@ -396,16 +302,16 @@ export const CustomMetrics: React.FC = () => {
 
           <button
             onClick={() => setShowCreateModal(true)}
-            className="btn-primary flex items-center space-x-2"
+            className="btn-primary flex items-center gap-1.5 text-xs py-1.5 px-3"
           >
-            <Plus className="w-4 h-4" />
-            <span>{t('create_metric')}</span>
+            <Plus className="w-3.5 h-3.5" />
+            {t('create_metric')}
           </button>
         </div>
       </div>
 
       {/* Metrics Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {metrics.length === 0 ? (
           <div className="col-span-2 text-center py-12">
             <div className="text-gray-500 dark:text-gray-400 dark:text-gray-500">
@@ -482,7 +388,7 @@ export const CustomMetrics: React.FC = () => {
 
                   <div className="flex items-center space-x-2">
                     <button
-                      onClick={() => toggleMetricStatus(metric.id)}
+                      onClick={() => toggleMetricStatus(metric.id, metric.isActive)}
                       className="text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500 hover:text-gray-900 dark:hover:text-white dark:text-white"
                     >
                       <Settings className="w-4 h-4" />

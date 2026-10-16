@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useDashboards } from '../hooks/useDashboards';
 import {
   Plus,
   Save,
@@ -76,7 +77,8 @@ interface PieDataItem {
 
 export const DashboardBuilder: React.FC = () => {
   const { t } = useTranslation();
-  const [dashboards, setDashboards] = useState<Dashboard[]>([]);
+  const { data: dbData } = useDashboards();
+  const dashboards: Dashboard[] = (dbData?.dashboards ?? []) as Dashboard[];
   const [currentDashboard, setCurrentDashboard] = useState<Dashboard | null>(null);
   const [selectedWidget, setSelectedWidget] = useState<Widget | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -217,48 +219,12 @@ export const DashboardBuilder: React.FC = () => {
     { name: 'Debug', value: 15, color: '#10b981' }
   ];
 
-  // Mock dashboards
-  const mockDashboards: Dashboard[] = [
-    {
-      id: '1',
-      name: 'System Overview',
-      description: 'Main system monitoring dashboard',
-      layout: 'grid',
-      theme: 'auto',
-      refreshInterval: 30,
-      isPublic: true,
-      createdAt: '2024-01-01T00:00:00Z',
-      updatedAt: '2024-01-15T10:30:00Z',
-      createdBy: 'admin@company.com',
-      widgets: [
-        {
-          id: '1',
-          type: 'metric',
-          title: 'CPU Usage',
-          position: { x: 0, y: 0, w: 3, h: 2 },
-          config: { metric: 'cpu_usage', format: '%', threshold: { warning: 80, critical: 95 } },
-          data: { value: 65, trend: 5 },
-          visible: true,
-          locked: false
-        },
-        {
-          id: '2',
-          type: 'chart',
-          title: 'System Metrics',
-          position: { x: 3, y: 0, w: 6, h: 4 },
-          config: { chartType: 'line', metrics: ['cpu', 'memory'] },
-          data: mockChartData,
-          visible: true,
-          locked: false
-        }
-      ]
-    }
-  ];
-
+  // Set current dashboard when data loads
   useEffect(() => {
-    setDashboards(mockDashboards);
-    setCurrentDashboard(mockDashboards[0]);
-  }, []);
+    if (dashboards.length > 0 && !currentDashboard) {
+      setCurrentDashboard(dashboards[0] as any);
+    }
+  }, [dashboards]);
 
   const createWidget = (template: WidgetTemplate) => {
     if (!currentDashboard) return;

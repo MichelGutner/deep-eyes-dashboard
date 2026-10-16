@@ -1,598 +1,277 @@
-import {
-  Activity,
-  Brain,
-  CheckCircle,
-  Lightbulb,
-  RefreshCw,
-  TrendingDown,
-  TrendingUp,
-  X
-} from 'lucide-react';
+import { Activity, Brain, CheckCircle, Lightbulb, RefreshCw, TrendingDown, TrendingUp, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart as RechartsPieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { mlService } from '../services/mlService';
-import toast from 'react-hot-toast';
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 interface Anomaly {
-  id: string;
-  timestamp: string;
-  metric: string;
-  value: number;
-  expectedValue: number;
-  deviation: number;
+  id: string; timestamp: string; metric: string;
+  value: number; expectedValue: number; deviation: number;
   severity: 'low' | 'medium' | 'high' | 'critical';
   type: 'spike' | 'drop' | 'trend_change' | 'seasonal_anomaly';
-  confidence: number;
-  status: 'detected' | 'investigating' | 'resolved' | 'false_positive';
-  description: string;
-  recommendations: string[];
+  confidence: number; status: 'detected' | 'investigating' | 'resolved' | 'false_positive';
+  description: string; recommendations: string[];
 }
 
 interface Prediction {
-  id: string;
-  metric: string;
-  currentValue: number;
-  predictedValue: number;
-  confidence: number;
-  timeframe: string;
-  trend: 'increasing' | 'decreasing' | 'stable';
+  id: string; metric: string; currentValue: number; predictedValue: number;
+  confidence: number; timeframe: string; trend: 'increasing' | 'decreasing' | 'stable';
   factors: string[];
-  lastUpdated: string;
 }
 
 interface MLModel {
-  id: string;
-  name: string;
-  type: 'anomaly_detection' | 'forecasting' | 'classification' | 'regression';
-  status: 'training' | 'active' | 'inactive' | 'error';
-  accuracy: number;
-  lastTrained: string;
-  trainingData: number;
-  features: string[];
-  performance: {
-    precision: number;
-    recall: number;
-    f1Score: number;
-  };
+  id: string; name: string; type: string; status: 'training' | 'active' | 'inactive' | 'error';
+  accuracy: number; lastTrained: string; trainingData: number;
+  performance: { precision: number; recall: number; f1Score: number };
 }
 
 interface Insight {
-  id: string;
-  type: 'correlation' | 'trend' | 'anomaly' | 'optimization';
-  title: string;
-  description: string;
-  confidence: number;
-  impact: 'low' | 'medium' | 'high';
-  category: string;
-  timestamp: string;
-  actionable: boolean;
-  actions: string[];
+  id: string; type: string; title: string; description: string;
+  confidence: number; impact: 'low' | 'medium' | 'high';
+  timestamp: string; actionable: boolean; actions: string[];
+}
+
+const SEV: Record<string, string> = {
+  low:      'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
+  medium:   'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-300',
+  high:     'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300',
+  critical: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+};
+const MODEL_STATUS: Record<string, string> = {
+  active:   'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300',
+  training: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
+  inactive: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
+  error:    'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+};
+
+function genAnomalies(): Anomaly[] {
+  const types: Anomaly['type'][] = ['spike', 'drop', 'trend_change', 'seasonal_anomaly'];
+  const sevs: Anomaly['severity'][] = ['low', 'medium', 'high', 'critical'];
+  const metrics = ['CPU Usage', 'Memory Usage', 'Response Time', 'Error Rate', 'Throughput'];
+  return Array.from({ length: 15 }, (_, i) => ({
+    id: `a${i}`, timestamp: new Date(Date.now() - Math.random() * 86_400_000).toISOString(),
+    metric: metrics[i % metrics.length], value: Math.random() * 100 + 50,
+    expectedValue: Math.random() * 80 + 20, deviation: Math.random() * 50 + 10,
+    severity: sevs[i % 4], type: types[i % 4], confidence: Math.random() * 0.4 + 0.6,
+    status: 'detected', description: 'Unusual pattern detected in system behavior',
+    recommendations: ['Check system resources', 'Review recent deployments'],
+  }));
+}
+
+function genPredictions(): Prediction[] {
+  const metrics = ['CPU Usage', 'Memory Usage', 'Response Time', 'Error Rate'];
+  const trends: Prediction['trend'][] = ['increasing', 'decreasing', 'stable'];
+  return Array.from({ length: 8 }, (_, i) => ({
+    id: `p${i}`, metric: metrics[i % 4], currentValue: Math.random() * 100 + 20,
+    predictedValue: Math.random() * 100 + 20, confidence: Math.random() * 0.3 + 0.7,
+    timeframe: ['1h', '6h', '24h', '7d'][i % 4], trend: trends[i % 3],
+    factors: ['User load', 'System resources', 'Network latency'],
+  }));
+}
+
+const MODELS: MLModel[] = [
+  { id: 'ad', name: 'Anomaly Detection', type: 'anomaly_detection', status: 'active', accuracy: 0.94, lastTrained: new Date(Date.now() - 2 * 86_400_000).toISOString(), trainingData: 50_000, performance: { precision: 0.92, recall: 0.89, f1Score: 0.90 } },
+  { id: 'fc', name: 'Resource Forecasting', type: 'forecasting', status: 'active', accuracy: 0.87, lastTrained: new Date(Date.now() - 7 * 86_400_000).toISOString(), trainingData: 100_000, performance: { precision: 0.85, recall: 0.88, f1Score: 0.86 } },
+  { id: 'cl', name: 'Alert Classification', type: 'classification', status: 'training', accuracy: 0.91, lastTrained: new Date(Date.now() - 86_400_000).toISOString(), trainingData: 25_000, performance: { precision: 0.89, recall: 0.93, f1Score: 0.91 } },
+];
+
+function genInsights(): Insight[] {
+  const types = ['correlation', 'trend', 'anomaly', 'optimization'];
+  const impacts: Insight['impact'][] = ['low', 'medium', 'high'];
+  return Array.from({ length: 6 }, (_, i) => ({
+    id: `ins${i}`, type: types[i % 4], title: `Insight ${i + 1}`,
+    description: 'Automated insight generated by ML models',
+    confidence: Math.random() * 0.4 + 0.6, impact: impacts[i % 3],
+    timestamp: new Date(Date.now() - Math.random() * 86_400_000).toISOString(),
+    actionable: i % 3 !== 0,
+    actions: ['Optimize resource allocation', 'Update alert thresholds'],
+  }));
 }
 
 export const MachineLearning: React.FC = () => {
-  const { t } = useTranslation();
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [models, setModels] = useState<MLModel[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
   const [selectedAnomaly, setSelectedAnomaly] = useState<Anomaly | null>(null);
-  const [autoMLEnabled, setAutoMLEnabled] = useState(true);
+  const [autoML, setAutoML] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [mlHealth, setMlHealth] = useState<boolean>(false);
-  const [filter, setFilter] = useState({
-    severity: [] as string[],
-    type: [] as string[],
-    status: [] as string[],
-    timeRange: '24h'
-  });
+  const [timeRange, setTimeRange] = useState('24h');
 
-  // Check ML backend health and load data
   useEffect(() => {
-    checkMlHealth();
-    loadMlData();
+    setAnomalies(genAnomalies());
+    setPredictions(genPredictions());
+    setInsights(genInsights());
   }, []);
 
-  const checkMlHealth = async () => {
-    try {
-      const health = await mlService.getHealth();
-      setMlHealth(health.status === 'healthy');
-    } catch (error) {
-      console.error('ML Health check failed:', error);
-      setMlHealth(false);
-    }
-  };
-
-  const loadMlData = async () => {
+  const reload = () => {
     setLoading(true);
-    try {
-      // Generate sample data for ML analysis
-      const sampleData = generateSampleData();
-      
-      // Test ML backend endpoints
-      const [anomalyResult, predictionResult, insightsResult] = await Promise.allSettled([
-        mlService.detectAnomalies(sampleData),
-        mlService.generatePredictions(sampleData, 5),
-        mlService.getInsightsSummary('1h')
-      ]);
-
-      // Generate mock data with real ML results if available
-      const anomalyData = generateMockAnomalies();
-      const predictionData = generateMockPredictions();
-      const modelData = generateMockModels();
-      const insightData = generateMockInsights();
-
-      // Update with real ML results if available
-      if (anomalyResult.status === 'fulfilled') {
-        console.log('Real anomaly detection result:', anomalyResult.value);
-        // You can merge real results with mock data here
-      }
-
-      if (predictionResult.status === 'fulfilled') {
-        console.log('Real prediction result:', predictionResult.value);
-        // Update predictions with real ML results
-        const realPredictions = predictionResult.value.predictions || [];
-        if (realPredictions.length > 0) {
-          const updatedPredictions = predictionData.map((pred, index) => ({
-            ...pred,
-            predictedValue: realPredictions[index] || pred.predictedValue,
-            trend: predictionResult.value.trend || pred.trend,
-            confidence: predictionResult.value.confidence || pred.confidence
-          }));
-          setPredictions(updatedPredictions);
-        } else {
-          setPredictions(predictionData);
-        }
-      } else {
-        setPredictions(predictionData);
-      }
-
-      if (insightsResult.status === 'fulfilled') {
-        console.log('Real insights result:', insightsResult.value);
-        // You can merge real insights with mock data here
-      }
-
-      setAnomalies(anomalyData);
-      setModels(modelData);
-      setInsights(insightData);
-      
-      toast.success(t('ml_data_loaded_successfully'));
-    } catch (error) {
-      console.error('Error loading ML data:', error);
-      toast.error(t('failed_to_load_ml_data'));
-      
-      // Use mock data as fallback
-      setAnomalies(generateMockAnomalies());
-      setPredictions(generateMockPredictions());
-      setModels(generateMockModels());
-      setInsights(generateMockInsights());
-    } finally {
+    setTimeout(() => {
+      setAnomalies(genAnomalies());
+      setPredictions(genPredictions());
       setLoading(false);
-    }
+    }, 800);
   };
 
-  const generateSampleData = (): Array<{timestamp: number, value: number}> => {
-    const now = Date.now();
-    return Array.from({ length: 100 }, (_, i) => ({
-      timestamp: now - (100 - i) * 60000, // 1 minute intervals
-      value: Math.random() * 100
-    }));
-  };
-
-  const generateMockAnomalies = (): Anomaly[] => {
-    return Array.from({ length: 15 }, (_, i) => {
-      const types: Anomaly['type'][] = ['spike', 'drop', 'trend_change', 'seasonal_anomaly'];
-      const severities: Anomaly['severity'][] = ['low', 'medium', 'high', 'critical'];
-      const statuses: Anomaly['status'][] = ['detected', 'investigating', 'resolved', 'false_positive'];
-      const metrics = ['CPU Usage', 'Memory Usage', 'Response Time', 'Error Rate', 'Throughput'];
-      
-      return {
-        id: `anomaly-${i}`,
-        timestamp: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString(),
-        metric: metrics[Math.floor(Math.random() * metrics.length)],
-        value: Math.random() * 100 + 50,
-        expectedValue: Math.random() * 80 + 20,
-        deviation: Math.random() * 50 + 10,
-        severity: severities[Math.floor(Math.random() * severities.length)],
-        type: types[Math.floor(Math.random() * types.length)],
-        confidence: Math.random() * 0.4 + 0.6,
-        status: statuses[Math.floor(Math.random() * statuses.length)],
-        description: 'Unusual pattern detected in system behavior',
-        recommendations: [
-          'Check system resources',
-          'Review recent deployments',
-          'Monitor related metrics'
-        ]
-      };
-    });
-  };
-
-  const generateMockPredictions = (): Prediction[] => {
-    return Array.from({ length: 8 }, (_, i) => {
-      const metrics = ['CPU Usage', 'Memory Usage', 'Response Time', 'Error Rate'];
-      const trends: Prediction['trend'][] = ['increasing', 'decreasing', 'stable'];
-      
-      return {
-        id: `prediction-${i}`,
-        metric: metrics[Math.floor(Math.random() * metrics.length)],
-        currentValue: Math.random() * 100 + 20,
-        predictedValue: Math.random() * 100 + 20,
-        confidence: Math.random() * 0.3 + 0.7,
-        timeframe: ['1h', '6h', '24h', '7d'][Math.floor(Math.random() * 4)],
-        trend: trends[Math.floor(Math.random() * trends.length)],
-        factors: ['User load', 'System resources', 'Network latency'],
-        lastUpdated: new Date(Date.now() - Math.random() * 60 * 60 * 1000).toISOString()
-      };
-    });
-  };
-
-  const generateMockModels = (): MLModel[] => {
-    return [
-      {
-        id: 'anomaly-detector',
-        name: 'Anomaly Detection Model',
-        type: 'anomaly_detection',
-        status: 'active',
-        accuracy: 0.94,
-        lastTrained: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-        trainingData: 50000,
-        features: ['cpu_usage', 'memory_usage', 'response_time', 'error_rate'],
-        performance: {
-          precision: 0.92,
-          recall: 0.89,
-          f1Score: 0.90
-        }
-      },
-      {
-        id: 'forecast-model',
-        name: 'Resource Forecasting',
-        type: 'forecasting',
-        status: 'active',
-        accuracy: 0.87,
-        lastTrained: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-        trainingData: 100000,
-        features: ['historical_usage', 'time_of_day', 'day_of_week', 'seasonal_patterns'],
-        performance: {
-          precision: 0.85,
-          recall: 0.88,
-          f1Score: 0.86
-        }
-      },
-      {
-        id: 'classifier',
-        name: 'Alert Classification',
-        type: 'classification',
-        status: 'training',
-        accuracy: 0.91,
-        lastTrained: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-        trainingData: 25000,
-        features: ['alert_type', 'severity', 'source', 'context'],
-        performance: {
-          precision: 0.89,
-          recall: 0.93,
-          f1Score: 0.91
-        }
-      }
-    ];
-  };
-
-  const generateMockInsights = (): Insight[] => {
-    return Array.from({ length: 10 }, (_, i) => {
-      const types: Insight['type'][] = ['correlation', 'trend', 'anomaly', 'optimization'];
-      const impacts: Insight['impact'][] = ['low', 'medium', 'high'];
-      
-      return {
-        id: `insight-${i}`,
-        type: types[Math.floor(Math.random() * types.length)],
-        title: `Insight ${i + 1}`,
-        description: 'Automated insight generated by ML models',
-        confidence: Math.random() * 0.4 + 0.6,
-        impact: impacts[Math.floor(Math.random() * impacts.length)],
-        category: ['Performance', 'Security', 'Resource', 'User Experience'][Math.floor(Math.random() * 4)],
-        timestamp: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString(),
-        actionable: Math.random() > 0.3,
-        actions: ['Optimize resource allocation', 'Update alert thresholds', 'Scale infrastructure']
-      };
-    });
-  };
-
-  const getSeverityColor = (severity: string) => {
-    const colors = {
-      low: 'bg-blue-100 text-blue-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      high: 'bg-orange-100 text-orange-800',
-      critical: 'bg-red-100 text-red-800'
-    };
-    return colors[severity as keyof typeof colors] || colors.low;
-  };
-
-  const getStatusColor = (status: string) => {
-    const colors = {
-      training: 'bg-blue-100 text-blue-800',
-      active: 'bg-green-100 text-green-800',
-      inactive: 'bg-gray-100 dark:bg-gray-700 text-gray-800',
-      error: 'bg-red-100 text-red-800'
-    };
-    return colors[status as keyof typeof colors] || colors.inactive;
-  };
-
-  const getImpactColor = (impact: string) => {
-    const colors = {
-      low: 'bg-green-100 text-green-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      high: 'bg-red-100 text-red-800'
-    };
-    return colors[impact as keyof typeof colors] || colors.low;
-  };
-
-  const getTrendIcon = (trend: string) => {
-    switch (trend) {
-      case 'increasing': return <TrendingUp className="w-4 h-4 text-red-600" />;
-      case 'decreasing': return <TrendingDown className="w-4 h-4 text-green-600" />;
-      case 'stable': return <Activity className="w-4 h-4 text-blue-600" />;
-      default: return <Activity className="w-4 h-4 text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500" />;
-    }
-  };
-
-  const filteredAnomalies = anomalies.filter(anomaly => {
-    if (filter.severity.length > 0 && !filter.severity.includes(anomaly.severity)) return false;
-    if (filter.type.length > 0 && !filter.type.includes(anomaly.type)) return false;
-    if (filter.status.length > 0 && !filter.status.includes(anomaly.status)) return false;
-    return true;
-  });
-
-  const anomalyData = [
-    { name: 'Low', value: anomalies.filter(a => a.severity === 'low').length, color: '#3B82F6' },
-    { name: 'Medium', value: anomalies.filter(a => a.severity === 'medium').length, color: '#F59E0B' },
-    { name: 'High', value: anomalies.filter(a => a.severity === 'high').length, color: '#EF4444' },
-    { name: 'Critical', value: anomalies.filter(a => a.severity === 'critical').length, color: '#8B5CF6' }
+  const sevDist = [
+    { name: 'Low',      value: anomalies.filter(a => a.severity === 'low').length,      color: '#3B82F6' },
+    { name: 'Medium',   value: anomalies.filter(a => a.severity === 'medium').length,    color: '#F59E0B' },
+    { name: 'High',     value: anomalies.filter(a => a.severity === 'high').length,      color: '#EF4444' },
+    { name: 'Critical', value: anomalies.filter(a => a.severity === 'critical').length,  color: '#8B5CF6' },
   ];
 
-  const performanceData = models.map(model => ({
-    name: model.name,
-    accuracy: model.accuracy * 100,
-    precision: model.performance.precision * 100,
-    recall: model.performance.recall * 100
+  const perfData = MODELS.map(m => ({
+    name: m.name.split(' ')[0], accuracy: +(m.accuracy * 100).toFixed(1),
+    precision: +(m.performance.precision * 100).toFixed(1),
+    recall: +(m.performance.recall * 100).toFixed(1),
   }));
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{t('machine_learning')}</h2>
-          <p className="text-gray-600 dark:text-gray-400">{t('machine_learning_subtitle')}</p>
+    <div className="space-y-5">
+      {/* Header strip */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-wrap gap-2">
+          {[
+            { label: 'Anomalies', value: anomalies.length, color: 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800' },
+            { label: 'Models active', value: MODELS.filter(m => m.status === 'active').length, color: 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800' },
+            { label: 'Predictions', value: predictions.length, color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800' },
+            { label: 'Insights', value: insights.length, color: 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-800' },
+          ].map(s => (
+            <div key={s.label} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium ${s.color}`}>
+              <span className="font-bold text-sm">{s.value}</span>
+              <span className="opacity-75">{s.label}</span>
+            </div>
+          ))}
         </div>
-        <div className="flex items-center space-x-4">
-          {/* ML Backend Status */}
-          <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
-            mlHealth 
-              ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
-              : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-          }`}>
-            <div className={`w-2 h-2 rounded-full ${mlHealth ? 'bg-green-500' : 'bg-red-500'}`} />
-            {mlHealth ? t('ml_backend_connected') : t('ml_backend_disconnected')}
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <Brain className="w-5 h-5 text-purple-600" />
-            <span className="text-sm text-gray-600 dark:text-gray-400">{t('auto_ml')}</span>
-            <button
-              onClick={() => setAutoMLEnabled(!autoMLEnabled)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full ${
-                autoMLEnabled ? 'bg-purple-600' : 'bg-gray-200'
-              }`}
-            >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white dark:bg-gray-700 transition ${
-                autoMLEnabled ? 'translate-x-6' : 'translate-x-1'
-              }`} />
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <Brain className="w-3.5 h-3.5 text-purple-500" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">AutoML</span>
+            <button onClick={() => setAutoML(v => !v)} className={`relative inline-flex h-4 w-8 flex-shrink-0 rounded-full cursor-pointer transition-colors ${autoML ? 'bg-purple-600' : 'bg-gray-200 dark:bg-gray-600'}`}>
+              <span className={`inline-block h-3 w-3 mt-0.5 rounded-full bg-white shadow transition-transform ${autoML ? 'translate-x-4' : 'translate-x-0.5'}`} />
             </button>
           </div>
-          
-          <button 
-            onClick={loadMlData}
-            disabled={loading}
-            className="btn-secondary flex items-center space-x-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            <span>{loading ? t('loading') : t('retrain_models')}</span>
+          <select value={timeRange} onChange={e => setTimeRange(e.target.value)} className="form-select text-xs py-1 px-2 h-7">
+            <option value="1h">1h</option>
+            <option value="24h">24h</option>
+            <option value="7d">7d</option>
+          </select>
+          <button onClick={reload} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-2.5">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Retrain
           </button>
         </div>
       </div>
 
-      {/* ML Models Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {models.map((model) => (
-          <div key={model.id} className="card">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
-                  <Brain className="w-4 h-4 text-purple-600" />
+      {/* Models row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {MODELS.map(m => (
+          <div key={m.id} className="card space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 bg-purple-100 dark:bg-purple-900/40 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Brain className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">{model.name}</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 capitalize">{model.type.replace('_', ' ')}</p>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">{m.name}</p>
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 capitalize">{m.type.replace('_', ' ')}</p>
                 </div>
               </div>
-              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(model.status)}`}>
-                {model.status}
-              </span>
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${MODEL_STATUS[m.status]}`}>{m.status}</span>
             </div>
-            
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500 dark:text-gray-400">{t('accuracy')}</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">{(model.accuracy * 100).toFixed(1)}%</span>
+            <div>
+              <div className="flex justify-between text-xs mb-1">
+                <span className="text-gray-400 dark:text-gray-500">Accuracy</span>
+                <span className="font-semibold text-gray-900 dark:text-white">{(m.accuracy * 100).toFixed(1)}%</span>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-purple-600 h-2 rounded-full" 
-                  style={{ width: `${model.accuracy * 100}%` }}
-                ></div>
-              </div>
-              
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <div className="text-gray-500 dark:text-gray-400">{t('precision')}</div>
-                  <div className="font-medium">{(model.performance.precision * 100).toFixed(1)}%</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 dark:text-gray-400">{t('recall')}</div>
-                  <div className="font-medium">{(model.performance.recall * 100).toFixed(1)}%</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 dark:text-gray-400">{t('f1_score')}</div>
-                  <div className="font-medium">{(model.performance.f1Score * 100).toFixed(1)}%</div>
-                </div>
-              </div>
-              
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {t('last_trained')}: {new Date(model.lastTrained).toLocaleDateString()}
+              <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1.5">
+                <div className="bg-purple-600 h-1.5 rounded-full" style={{ width: `${m.accuracy * 100}%` }} />
               </div>
             </div>
+            <div className="grid grid-cols-3 gap-1 text-xs">
+              {[['P', (m.performance.precision * 100).toFixed(0)+'%'], ['R', (m.performance.recall * 100).toFixed(0)+'%'], ['F1', (m.performance.f1Score * 100).toFixed(0)+'%']].map(([k, v]) => (
+                <div key={k} className="text-center bg-gray-50 dark:bg-gray-700/50 rounded p-1">
+                  <div className="text-gray-400 dark:text-gray-500">{k}</div>
+                  <div className="font-semibold text-gray-900 dark:text-white">{v}</div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500">Trained {new Date(m.lastTrained).toLocaleDateString()} · {(m.trainingData / 1000).toFixed(0)}k samples</p>
           </div>
         ))}
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Anomaly Distribution */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">{t('anomaly_distribution')}</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <RechartsPieChart>
-              <Pie
-                data={anomalyData}
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-                dataKey="value"
-              >
-                {anomalyData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Anomaly distribution</h3>
+          <ResponsiveContainer width="100%" height={180}>
+            <PieChart>
+              <Pie data={sevDist} cx="50%" cy="50%" outerRadius={65} innerRadius={30} dataKey="value" paddingAngle={2}>
+                {sevDist.map((e, i) => <Cell key={i} fill={e.color} />)}
               </Pie>
-              <Tooltip />
-            </RechartsPieChart>
+              <Tooltip contentStyle={{ borderRadius: '0.5rem', border: '1px solid #e5e7eb', fontSize: 12 }} />
+            </PieChart>
           </ResponsiveContainer>
         </div>
-
-        {/* Model Performance */}
         <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">{t('model_performance')}</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={performanceData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="accuracy" fill="#8B5CF6" name={t('accuracy')} />
-              <Bar dataKey="precision" fill="#3B82F6" name={t('precision')} />
-              <Bar dataKey="recall" fill="#10B981" name={t('recall')} />
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Model performance</h3>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={perfData} barSize={10}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" className="dark:stroke-gray-700" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="#9ca3af" />
+              <YAxis domain={[75, 100]} tick={{ fontSize: 11 }} stroke="#9ca3af" />
+              <Tooltip contentStyle={{ borderRadius: '0.5rem', border: '1px solid #e5e7eb', fontSize: 12 }} />
+              <Bar dataKey="accuracy" fill="#8B5CF6" name="Accuracy" />
+              <Bar dataKey="precision" fill="#3B82F6" name="Precision" />
+              <Bar dataKey="recall" fill="#10B981" name="Recall" />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Predictions */}
+      {/* Predictions grid */}
       <div className="card">
-        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">{t('predictions')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {predictions.map((prediction) => (
-            <div key={prediction.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-900 dark:text-white">{prediction.metric}</span>
-                {getTrendIcon(prediction.trend)}
+        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Predictions</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {predictions.map(p => (
+            <div key={p.id} className="border border-gray-100 dark:border-gray-700 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-medium text-gray-900 dark:text-white truncate">{p.metric}</span>
+                {p.trend === 'increasing' ? <TrendingUp className="w-3.5 h-3.5 text-red-500 flex-shrink-0" /> : p.trend === 'decreasing' ? <TrendingDown className="w-3.5 h-3.5 text-green-500 flex-shrink-0" /> : <Activity className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
               </div>
-              
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">{t('current_value')}</span>
-                  <span className="font-medium">{prediction.currentValue.toFixed(1)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">{t('predicted_value')}</span>
-                  <span className="font-medium">{prediction.predictedValue.toFixed(1)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">{t('confidence')}</span>
-                  <span className="font-medium">{(prediction.confidence * 100).toFixed(0)}%</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-400">{t('timeframe')}</span>
-                  <span className="font-medium">{prediction.timeframe}</span>
-                </div>
+              <div className="space-y-0.5 text-xs">
+                <div className="flex justify-between"><span className="text-gray-400 dark:text-gray-500">Now</span><span className="font-medium text-gray-900 dark:text-white">{p.currentValue.toFixed(1)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400 dark:text-gray-500">Pred</span><span className="font-medium text-gray-900 dark:text-white">{p.predictedValue.toFixed(1)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400 dark:text-gray-500">{p.timeframe}</span><span className="text-gray-500 dark:text-gray-400">{(p.confidence * 100).toFixed(0)}%</span></div>
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Anomalies */}
+      {/* Anomalies table */}
       <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('recent_anomalies')}</h3>
-          <div className="flex items-center space-x-2">
-            <select
-              value={filter.timeRange}
-              onChange={(e) => setFilter({ ...filter, timeRange: e.target.value })}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm"
-            >
-              <option value="1h">{t('last_hour')}</option>
-              <option value="24h">{t('last_24_hours')}</option>
-              <option value="7d">{t('last_7_days')}</option>
-            </select>
-          </div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent anomalies</h3>
+          <span className="text-xs text-gray-400 dark:text-gray-500">{anomalies.length} total</span>
         </div>
-
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('metric')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('value')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('deviation')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('severity')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('confidence')}
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  {t('time')}
-                </th>
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 dark:border-gray-700">
+                {['Metric', 'Type', 'Value', 'Δ%', 'Severity', 'Confidence', 'Time'].map(h => (
+                  <th key={h} className="pb-2 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide pr-4">{h}</th>
+                ))}
               </tr>
             </thead>
-            <tbody className="bg-white dark:bg-gray-700 divide-y divide-gray-200">
-              {filteredAnomalies.slice(0, 10).map((anomaly) => (
-                <tr key={anomaly.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 dark:bg-gray-800 cursor-pointer" onClick={() => setSelectedAnomaly(anomaly)}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">{anomaly.metric}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400 capitalize">{anomaly.type.replace('_', ' ')}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    {anomaly.value.toFixed(1)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    {anomaly.deviation.toFixed(1)}%
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getSeverityColor(anomaly.severity)}`}>
-                      {anomaly.severity.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    {(anomaly.confidence * 100).toFixed(0)}%
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                    {new Date(anomaly.timestamp).toLocaleString()}
-                  </td>
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+              {anomalies.slice(0, 10).map(a => (
+                <tr key={a.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 cursor-pointer" onClick={() => setSelectedAnomaly(a)}>
+                  <td className="py-2 pr-4 font-medium text-gray-900 dark:text-white whitespace-nowrap">{a.metric}</td>
+                  <td className="py-2 pr-4 text-gray-400 dark:text-gray-500 text-xs capitalize">{a.type.replace('_', ' ')}</td>
+                  <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{a.value.toFixed(1)}</td>
+                  <td className="py-2 pr-4 text-orange-600 dark:text-orange-400">+{a.deviation.toFixed(1)}%</td>
+                  <td className="py-2 pr-4"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${SEV[a.severity]}`}>{a.severity}</span></td>
+                  <td className="py-2 pr-4 text-gray-600 dark:text-gray-400">{(a.confidence * 100).toFixed(0)}%</td>
+                  <td className="py-2 text-gray-400 dark:text-gray-500 text-xs whitespace-nowrap">{new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
                 </tr>
               ))}
             </tbody>
@@ -602,104 +281,61 @@ export const MachineLearning: React.FC = () => {
 
       {/* AI Insights */}
       <div className="card">
-        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">{t('ai_insights')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {insights.slice(0, 6).map((insight) => (
-            <div key={insight.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center space-x-2">
-                  <Lightbulb className="w-4 h-4 text-yellow-600" />
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">{insight.title}</span>
+        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">AI Insights</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {insights.map(ins => (
+            <div key={ins.id} className="border border-gray-100 dark:border-gray-700 rounded-lg p-3">
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="flex items-center gap-1.5">
+                  <Lightbulb className="w-3.5 h-3.5 text-yellow-500 flex-shrink-0" />
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">{ins.title}</span>
                 </div>
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getImpactColor(insight.impact)}`}>
-                  {insight.impact.toUpperCase()}
-                </span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${SEV[ins.impact]}`}>{ins.impact}</span>
               </div>
-              
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{insight.description}</p>
-              
-              <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                <span>{t('confidence')}: {(insight.confidence * 100).toFixed(0)}%</span>
-                <span>{new Date(insight.timestamp).toLocaleDateString()}</span>
-              </div>
-              
-              {insight.actionable && (
-                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{t('recommended_actions')}:</div>
-                  <ul className="text-xs text-gray-600 dark:text-gray-400 dark:text-gray-500 space-y-1">
-                    {insight.actions.slice(0, 2).map((action, index) => (
-                      <li key={index}>• {action}</li>
-                    ))}
-                  </ul>
-                </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{ins.description}</p>
+              {ins.actionable && ins.actions.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5">
+                  {ins.actions.slice(0, 2).map((a, i) => <li key={i} className="text-xs text-gray-500 dark:text-gray-400">· {a}</li>)}
+                </ul>
               )}
+              <div className="flex items-center justify-between mt-1.5 text-[10px] text-gray-400 dark:text-gray-500">
+                <span>{(ins.confidence * 100).toFixed(0)}% confidence</span>
+                <span>{new Date(ins.timestamp).toLocaleDateString()}</span>
+              </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Anomaly Details Modal */}
+      {/* Anomaly detail modal */}
       {selectedAnomaly && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-700 rounded-lg p-6 w-full max-w-2xl">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedAnomaly(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('anomaly_details')}</h3>
-              <button
-                onClick={() => setSelectedAnomaly(null)}
-                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-500"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">Anomaly — {selectedAnomaly.metric}</h3>
+              <button onClick={() => setSelectedAnomaly(null)} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"><X className="w-4 h-4 text-gray-400" /></button>
             </div>
-            
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('metric')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedAnomaly.metric}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('type')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white capitalize">{selectedAnomaly.type.replace('_', ' ')}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('current_value')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedAnomaly.value.toFixed(1)}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('expected_value')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedAnomaly.expectedValue.toFixed(1)}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('deviation')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedAnomaly.deviation.toFixed(1)}%</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('confidence')}</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{(selectedAnomaly.confidence * 100).toFixed(0)}%</p>
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('description')}</label>
-                <p className="text-sm text-gray-900 dark:text-white">{selectedAnomaly.description}</p>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{t('recommendations')}</label>
-                <ul className="mt-2 space-y-1">
-                  {selectedAnomaly.recommendations.map((rec, index) => (
-                    <li key={index} className="text-sm text-gray-900 dark:text-white flex items-center space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                      <span>{rec}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+              {[
+                ['Type', selectedAnomaly.type.replace('_', ' ')],
+                ['Value', selectedAnomaly.value.toFixed(1)],
+                ['Expected', selectedAnomaly.expectedValue.toFixed(1)],
+                ['Deviation', `+${selectedAnomaly.deviation.toFixed(1)}%`],
+                ['Confidence', `${(selectedAnomaly.confidence * 100).toFixed(0)}%`],
+                ['Status', selectedAnomaly.status],
+              ].map(([k, v]) => (
+                <div key={k}><span className="text-gray-400 dark:text-gray-500 text-xs">{k}</span><p className="font-medium text-gray-900 dark:text-white capitalize">{v}</p></div>
+              ))}
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1.5">Recommendations</p>
+              {selectedAnomaly.recommendations.map((r, i) => (
+                <div key={i} className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300"><CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />{r}</div>
+              ))}
             </div>
           </div>
         </div>
       )}
     </div>
   );
-}; 
+};
