@@ -7,6 +7,7 @@ import {
   Download,
   ExternalLink,
   Globe,
+  Info,
   Monitor,
   MousePointer,
   Terminal,
@@ -17,6 +18,7 @@ import React, { useState } from 'react';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import { getLevelColors } from '../constants/colors';
+import { getFieldDoc } from '../constants/metadataDocs';
 import type { Breadcrumb, BreadcrumbType, LogEntry, Platform, StackFrame } from './AdvancedLogs';
 
 // ─── Platform labels ───────────────────────────────────────────────────────────
@@ -55,27 +57,232 @@ const Section: React.FC<{
   );
 };
 
+/** Small ⓘ button; the parent decides where the explanation text appears when `open`. */
+const InfoToggle: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, onToggle }) => (
+  <button
+    type="button"
+    onClick={event => { event.stopPropagation(); onToggle(); }}
+    title="O que é este campo?"
+    aria-expanded={open}
+    className={`flex-shrink-0 p-0.5 -m-0.5 rounded transition-colors ${
+      open ? 'text-blue-500' : 'text-gray-300 dark:text-gray-600 hover:text-blue-500 dark:hover:text-blue-400'
+    }`}
+  >
+    <Info className="w-3 h-3" />
+  </button>
+);
+
+const InfoNote: React.FC<{ children: React.ReactNode; indent?: boolean }> = ({ children, indent }) => (
+  <p className={`mt-1 mb-1.5 text-xs leading-relaxed rounded-md px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-900 dark:text-blue-100 border border-blue-100 dark:border-blue-900/40 ${indent ? 'ml-[8.75rem]' : ''}`}>
+    {children}
+  </p>
+);
+
 const KV: React.FC<{
   label: string;
   value: React.ReactNode;
   mono?: boolean;
   clickable?: boolean;
   onClick?: () => void;
-}> = ({ label, value, mono, clickable, onClick }) => (
-  <div className="flex items-start gap-3 py-0.5">
-    <span className="w-32 flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 pt-0.5">{label}</span>
-    <span
-      className={`flex-1 text-xs break-all ${mono ? 'font-mono' : ''} ${
-        clickable
-          ? 'text-blue-500 dark:text-blue-400 cursor-pointer hover:underline'
-          : 'text-gray-800 dark:text-gray-200'
-      }`}
-      onClick={clickable ? onClick : undefined}
-    >
-      {value ?? <span className="text-gray-300 dark:text-gray-600">—</span>}
-    </span>
-  </div>
-);
+  /** Explanation of the field; when set, an ⓘ icon next to the label reveals it. */
+  info?: string;
+}> = ({ label, value, mono, clickable, onClick, info }) => {
+  const [showInfo, setShowInfo] = useState(false);
+  return (
+    <div className="py-0.5">
+      <div className="flex items-start gap-3">
+        <span className="w-32 flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 pt-0.5 flex items-start gap-1">
+          <span className="break-all">{label}</span>
+          {info && <InfoToggle open={showInfo} onToggle={() => setShowInfo(v => !v)} />}
+        </span>
+        <span
+          className={`flex-1 text-xs break-all ${mono ? 'font-mono' : ''} ${
+            clickable
+              ? 'text-blue-500 dark:text-blue-400 cursor-pointer hover:underline'
+              : 'text-gray-800 dark:text-gray-200'
+          }`}
+          onClick={clickable ? onClick : undefined}
+        >
+          {value ?? <span className="text-gray-300 dark:text-gray-600">—</span>}
+        </span>
+      </div>
+      {info && showInfo && <InfoNote indent>{info}</InfoNote>}
+    </div>
+  );
+};
+
+// ─── Metadata tree ─────────────────────────────────────────────────────────────
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Leaf formatting: never "[object Object]" — primitives as text, scalar arrays joined, everything else as JSON. */
+function formatLeaf(value: unknown, key?: string): string {
+  if (value === null || value === undefined) return '—';
+  // Epoch-millisecond fields (collectedAt, firstInstallTime, lastUpdateTime…) as readable dates, raw value kept.
+  if (typeof value === 'number' && key && /(at|time|timestamp)$/i.test(key) && value > 1e12 && value < 4e12) {
+    return `${new Date(value).toLocaleString('pt-BR')} (${value})`;
+  }
+  if (typeof value === 'string') return value === '' ? '""' : value;
+  if (Array.isArray(value) && value.every(item => item === null || typeof item !== 'object')) {
+    return value.length === 0 ? '[]' : value.map(item => String(item)).join(', ');
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function countLeaves(value: unknown): number {
+  if (Array.isArray(value)) return value.reduce((n: number, item) => n + countLeaves(item), 0) || 0;
+  if (isPlainObject(value)) return Object.values(value).reduce((n: number, item) => n + countLeaves(item), 0);
+  return 1;
+}
+
+/** A metadata row: scalars render inline; objects/arrays-of-objects become a clickable row that opens the detail drawer. */
+const MetaNode: React.FC<{ name: string; value: unknown; onOpen: (name: string, value: unknown) => void }> = ({ name, value, onOpen }) => {
+  const [showInfo, setShowInfo] = useState(false);
+  const info = getFieldDoc([name]);
+  const complex = isPlainObject(value) || (Array.isArray(value) && value.some(item => typeof item === 'object' && item !== null));
+  if (!complex) return <KV label={name} value={formatLeaf(value, name)} mono info={info} />;
+
+  const size = Array.isArray(value) ? value.length : Object.keys(value as Record<string, unknown>).length;
+  return (
+    <div className="py-1">
+      <div className="flex items-center gap-3">
+        <span className="w-32 flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
+          <span className="break-all">{name}</span>
+          {info && <InfoToggle open={showInfo} onToggle={() => setShowInfo(v => !v)} />}
+        </span>
+        <button onClick={() => onOpen(name, value)} className="flex-1 flex items-center gap-3 text-left group">
+          <span className="flex-1 text-xs font-mono text-blue-500 dark:text-blue-400 group-hover:underline">
+            {Array.isArray(value) ? `[${size}]` : `{${size}}`} · {countLeaves(value)} valores
+          </span>
+          <ArrowRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-blue-500 flex-shrink-0" />
+        </button>
+      </div>
+      {info && showInfo && <InfoNote indent>{info}</InfoNote>}
+    </div>
+  );
+};
+
+/** Group heading inside the detail drawer, with its own ⓘ explanation. */
+const MetaGroupHeader: React.FC<{ title: string; count: number; info?: string }> = ({ title, count, info }) => {
+  const [showInfo, setShowInfo] = useState(false);
+  return (
+    <div>
+      <div className="flex items-center gap-2 py-1">
+        <div className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+        <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{title}</span>
+        <span className="text-xs text-gray-400">{count}</span>
+        {info && <InfoToggle open={showInfo} onToggle={() => setShowInfo(v => !v)} />}
+      </div>
+      {info && showInfo && <InfoNote>{info}</InfoNote>}
+    </div>
+  );
+};
+
+/** Renders an object as grouped sections: scalar keys as a table, nested objects as headed groups, recursively. `path` is the key path from `metadata`, used to look up each field's explanation. */
+const MetaBody: React.FC<{ value: unknown; filter: string; path: string[]; depth?: number }> = ({ value, filter, path, depth = 0 }) => {
+  const needle = filter.trim().toLowerCase();
+  const entries: Array<[string, unknown]> = Array.isArray(value)
+    ? value.map((item, index) => [String(index), item])
+    : Object.entries((value ?? {}) as Record<string, unknown>);
+
+  const matches = (key: string, child: unknown): boolean =>
+    !needle ||
+    key.toLowerCase().includes(needle) ||
+    (isPlainObject(child) || Array.isArray(child)
+      ? JSON.stringify(child).toLowerCase().includes(needle)
+      : formatLeaf(child).toLowerCase().includes(needle));
+
+  const visible = entries.filter(([key, child]) => matches(key, child));
+  const scalars = visible.filter(([, child]) => !(isPlainObject(child) || (Array.isArray(child) && child.some(i => typeof i === 'object' && i !== null))));
+  const groups = visible.filter(([, child]) => isPlainObject(child) || (Array.isArray(child) && child.some(i => typeof i === 'object' && i !== null)));
+
+  if (visible.length === 0) return <p className="text-xs text-gray-400 py-2">Nada encontrado.</p>;
+
+  return (
+    <div>
+      {scalars.length > 0 && (
+        <div className={depth ? 'pl-3 border-l border-gray-200 dark:border-gray-700 mb-2' : 'mb-3'}>
+          {scalars.map(([key, child]) => (
+            <KV key={key} label={key} value={formatLeaf(child, key)} mono info={getFieldDoc([...path, key])} />
+          ))}
+        </div>
+      )}
+      {groups.map(([key, child]) => (
+        <div key={key} className={depth ? 'mb-2' : 'mb-4'}>
+          <MetaGroupHeader title={key} count={countLeaves(child)} info={getFieldDoc([...path, key])} />
+          <div className="pl-3">
+            <MetaBody value={child} filter={filter} path={[...path, key]} depth={depth + 1} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/** Second drawer, stacked above the log drawer, dedicated to one metadata object. */
+const MetaDetailDrawer: React.FC<{ name: string; value: unknown; onClose: () => void }> = ({ name, value, onClose }) => {
+  const [filter, setFilter] = useState('');
+  const [visible, setVisible] = useState(false);
+
+  React.useEffect(() => {
+    const frame = requestAnimationFrame(() => setVisible(true));
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [onClose]);
+
+  const copy = () => {
+    navigator.clipboard.writeText(JSON.stringify(value, null, 2));
+    toast.success('JSON copiado');
+  };
+
+  return (
+    <>
+      <div className={`fixed inset-0 bg-black/30 z-[65] transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`} onClick={onClose} />
+      <div
+        style={{ width: '560px', maxWidth: '100vw' }}
+        className={`fixed top-0 right-0 bottom-0 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 z-[70] flex flex-col shadow-2xl transition-transform duration-200 ease-out ${visible ? 'translate-x-0' : 'translate-x-full'}`}
+      >
+        <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} title="Voltar" className="p-1.5 -ml-1.5 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <ArrowRight className="w-4 h-4 rotate-180" />
+            </button>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-gray-400 dark:text-gray-500">Metadata</p>
+              <p className="font-semibold text-gray-900 dark:text-white text-sm truncate">{name}</p>
+            </div>
+            <button onClick={copy} title="Copiar JSON" className="p-1.5 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <Copy className="w-4 h-4" />
+            </button>
+            <button onClick={onClose} title="Fechar" className="p-1.5 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <input
+            value={filter}
+            onChange={event => setFilter(event.target.value)}
+            placeholder="Filtrar por chave ou valor…"
+            className="mt-3 w-full px-3 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <MetaBody value={value} filter={filter} path={[name]} />
+        </div>
+      </div>
+    </>
+  );
+};
 
 // ─── Stack Frames ─────────────────────────────────────────────────────────────
 
@@ -313,6 +520,15 @@ function crashKindLabel(log: LogEntry): string | null {
     return `Provável falta de memória: app encerrado sem aviso${rssLabel}`;
   }
   if (tags.includes('anr')) return 'ANR — thread principal travada (app não crashou)';
+  if (tags.includes('app-exit')) {
+    const reason = log.metadata?.exitReason ?? log.metadata?.sessionEndCause;
+    const source = tags.includes('os-reported') ? 'reportado pelo sistema' : 'observado pelo SDK';
+    return `Encerramento do app${reason ? ` (${String(reason)})` : ''} — ${source}`;
+  }
+  if (tags.includes('memory-growth')) return 'Crescimento contínuo de memória — possível vazamento';
+  if (tags.includes('memory-limit')) return 'Memória próxima do limite do sistema';
+  if (tags.includes('native-error')) return 'Erro nativo engolido pelo React Native (não crashou o app)';
+  if (tags.includes('console-error')) return 'Erro registrado via console.error (tratado)';
   if (log.componentStack) return 'Erro de renderização (React ErrorBoundary)';
   if (log.level === 'fatal') return 'Não tratado (JS)';
   if (log.level === 'error') return 'Tratado (capturado)';
@@ -436,7 +652,8 @@ function buildTextReport(log: LogEntry): string {
 
   if (log.metadata && Object.keys(log.metadata).length > 0) {
     section('METADATA');
-    Object.entries(log.metadata).forEach(([k, v]) => lines.push(`${k}: ${String(v)}`));
+    Object.entries(log.metadata).forEach(([k, v]) =>
+      lines.push(`${k}: ${typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v)}`));
   }
 
   lines.push('');
@@ -449,6 +666,7 @@ function buildTextReport(log: LogEntry): string {
 }
 
 export const LogDrawer: React.FC<LogDrawerProps> = ({ log, isOpen, onClose, relatedLogs = [], onNavigateToTrace }) => {
+  const [metaDrawer, setMetaDrawer] = useState<{ name: string; value: unknown } | null>(null);
   const { t } = useTranslation();
 
   const copyJson = () => {
@@ -476,8 +694,16 @@ export const LogDrawer: React.FC<LogDrawerProps> = ({ log, isOpen, onClose, rela
   const crashKind = log ? crashKindLabel(log) : null;
   const [stackModalOpen, setStackModalOpen] = useState(false);
 
+  // The detail drawer belongs to one log: closing the log drawer or switching logs dismisses it.
+  React.useEffect(() => {
+    setMetaDrawer(null);
+  }, [log?.id, isOpen]);
+
   return (
     <>
+      {metaDrawer && (
+        <MetaDetailDrawer name={metaDrawer.name} value={metaDrawer.value} onClose={() => setMetaDrawer(null)} />
+      )}
       {stackModalOpen && log?.componentStack && (
         <StackTraceModal
           title="Component Stack (React) — completo"
@@ -773,7 +999,7 @@ export const LogDrawer: React.FC<LogDrawerProps> = ({ log, isOpen, onClose, rela
               {Object.keys(log.metadata).length > 0 && (
                 <Section title="Metadata" accentColor="#6b7280" defaultOpen={false}>
                   {Object.entries(log.metadata).map(([k, v]) => (
-                    <KV key={k} label={k} value={String(v)} mono />
+                    <MetaNode key={k} name={k} value={v} onOpen={(name, value) => setMetaDrawer({ name, value })} />
                   ))}
                 </Section>
               )}
